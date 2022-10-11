@@ -1,6 +1,6 @@
 # benthos-slack-sensitive-event-proxy
 
-This repo contains a [Benthos](https://benthos.dev)] config that ensures downstream services do not receive any Slack message text.
+This repo contains a [Benthos](https://benthos.dev) config that ensures downstream services do not receive any Slack message text.
 
 ## Background
 
