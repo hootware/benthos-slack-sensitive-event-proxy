@@ -1,0 +1,112 @@
+input:
+  http_server:
+    address: "${INPUT_ADDRESS:0.0.0.0:9876}"
+    path: /slack
+    allowed_verbs:
+      - POST
+    timeout: 5s
+    cors:
+      enabled: true
+      allowed_origins:
+        - '*'
+    sync_response:
+      status: '${! meta("status")}'
+      metadata_headers: {}
+
+pipeline:
+  processors:
+    # Verify the request timestamp and signature
+    - label: verification
+      bloblang: |-
+        root = this
+
+        # Check the timestamp is within 5 minutes
+        let slack_timestamp_raw = meta("X-Slack-Request-Timestamp").or("0").string()
+        let slack_timestamp_unix = $slack_timestamp_raw.number()
+        let now_timestamp_unix = now().ts_unix().number()
+        let timestamp_diff_seconds = ($now_timestamp_unix - $slack_timestamp_unix).abs()
+        let is_timestamp_verified = if $timestamp_diff_seconds.abs() < 300 { true } else { false }
+
+        # Check the signature
+        let slack_signature = meta("X-Slack-Signature").or("").string()
+        let signing_secret = env("SLACK_SIGNING_SECRET").or("unknown")
+        let raw_request_body = content()
+        let signature_base = "v0:%s:%s".format($slack_timestamp_raw, $raw_request_body)
+        let hmac_signature_string = "v0=%s".format($signature_base.hash("hmac-sha256", $signing_secret).encode("hex"))
+        let is_signature_verified = if $hmac_signature_string == $slack_signature { true } else { false }
+
+        # Set verification
+        root.is_verified = if $is_timestamp_verified == true && $is_signature_verified == true { true } else { false }
+
+    # If we are unverified then drop and return non-200 status code
+    - label: stop_if_unverified
+      bloblang: |-
+        meta status = if root.is_verified == false { 401 } else { 200 }
+        root = if root.is_verified == false { deleted() }
+
+    # Extract mentions from the text
+    - label: extract_mentions
+      bloblang: |-
+        root = this
+        # Extract user mentions
+        let event_text = root.event.text.or("")
+        let user_mention_result = $event_text.re_find_all_object("(?:\\<\\@)(?P<user_id>[A-Z0-9]{3,20})(?:\\>)")
+        let mention_user_ids = $user_mention_result.map_each(this.user_id)
+        root.event.mention_user_ids = if root.event.type == "message" && $mention_user_ids.length() > 0 { $mention_user_ids }
+
+        # Remove text and blocks if we have a message not related to a bot (app home or bot DM)
+        root.event.text = if root.event.type == "message" && root.authorizations.index(0).is_bot == false { deleted() }
+        root.event.blocks = if root.event.type == "message" && root.authorizations.index(0).is_bot == false { deleted() }
+
+    # Add a metric
+    - metric:
+        type: counter
+        name: mentions
+        labels:
+          event_type: root.event.type
+          is_bot: root.authorizations.index(0).is_bot
+        value: root.event.mention_user_ids.or([]).length()
+
+    # Drop message types that have no mentions and not a bot auth
+    - label: drop_messages_with_no_mentions
+      bloblang: |-
+        root = this
+        root = if root.event.type == "message" && root.event.mention_user_ids.or([]).length() == 0 && root.authorizations.index(0).is_bot == false { deleted() }
+
+    # Remove the is_verified flag
+    - bloblang: |-
+        root = this
+        root.is_verified = deleted()
+
+output:
+  broker:
+    pattern: fan_out
+    outputs:
+      - http_client:
+          url: "${PROXY_TO_URL}"
+          verb: POST
+          timeout: 3s
+          retry_period: 500ms
+          max_retry_backoff: 10s
+          retries: 3
+          max_in_flight: 4
+          propagate_response: true
+          headers:
+            'Content-Type': '${! meta("Content-Type") }'
+            'User-Agent': '${! meta("User-Agent") }'
+            'X-Slack-Request-Timestamp': '${! meta("X-Slack-Request-Timestamp") }'
+            'X-Slack-Signature': '${! meta("X-Slack-Signature") }'
+            'X-Slack-Additional-Verification-Token': '${SLACK_ADDITIONAL_VERIFICATION_TOKEN}'
+          successful_on:
+            - 200
+            - 201
+            - 204
+            - 400
+            - 401
+            - 403
+            - 404
+            - 500
+            - 501
+            - 502
+            - 503
+      - stdout: {}
