@@ -51,7 +51,7 @@ pipeline:
         # Extract user mentions
         let event_text = root.event.text.or("")
         let user_mention_result = $event_text.re_find_all_object("(?:\\<\\@)(?P<user_id>[A-Z0-9]{3,20})(?:\\>)")
-        let mention_user_ids = $user_mention_result.map_each(this.user_id)
+        let mention_user_ids = $user_mention_result.map_each(this.user_id).unique()
         root.event.mention_user_ids = if root.event.type == "message" && $mention_user_ids.length() > 0 { $mention_user_ids }
         root.event.is_bot = root.authorizations.index(0).is_bot
 
