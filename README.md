@@ -6,9 +6,13 @@ This repo contains a [Benthos](https://benthos.dev) config that ensures downstre
 
 The Slack API currently does not have a way to only listen for user mentions, therefore all messages in a channel need to be received, at which point user mentions can be extracted.
 
+## Security
+
+This config ensures that the HTTP input terminates SSL requests meaning that intermediate services or reverse proxies will need to pass through the encrypted HTTP request through to the benthos instance.
+
 ## Removing sensitive message data
 
-Messages can contain sensitive information. This config ensures that messages are recevied over the socket using HTTPS. If the event is a message then user mentions are extracted. The original message text and blocks are then removed before forwarding on, therefore removing the sensitive message text. All of this means that the original message text is received, stored in memory for a few milliseconds and deleted. Therefore, no message data is ever stored.
+Messages can contain sensitive information. If the event is a message then user mentions are extracted. The original message text and blocks are then removed before forwarding on, therefore removing the sensitive message text. All of this means that the original message text is received, stored in memory for a few milliseconds and deleted. Therefore, no message data is ever stored or persisted.
 
 ## Other event types
 

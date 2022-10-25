@@ -5,6 +5,8 @@ input:
     allowed_verbs:
       - POST
     timeout: 5s
+    cert_file: "${INPUT_CERT_FILE}"
+    key_file: "${INPUT_KEY_FILE}"
     cors:
       enabled: true
       allowed_origins:
